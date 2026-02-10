@@ -4,7 +4,7 @@ import { getVideo, updateVideo } from "../db/videos";
 import type { ApiConfig } from "../config";
 import type { BunRequest } from "bun";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
-import { getAssetDiskPath, getAssetURL, mediaTypeToExt, validateMediaType } from "./assets";
+import { getAssetDiskPath, getAssetURL, mediaTypeToExt } from "./assets";
 
 
 export async function handlerUploadThumbnail(cfg: ApiConfig, req: BunRequest) {
