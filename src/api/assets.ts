@@ -2,6 +2,7 @@ import { existsSync, mkdirSync } from "fs";
 import path from "path";
 
 import type { ApiConfig } from "../config";
+import { BadRequestError } from "./errors";
 
 export function ensureAssetsDir(cfg: ApiConfig) {
   if (!existsSync(cfg.assetsRoot)) {
