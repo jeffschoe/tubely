@@ -50,15 +50,19 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   await Bun.write(tempFilePath, file); // saved to disk
 
   const aspectRatio = await getVideoAspectRatio(tempFilePath);
+  const processedFilePath = await processVideoForFastStart(tempFilePath);
 
-  let key = `${aspectRatio}/${videoId}.mp4`;
-  await uploadVideoToS3(cfg, key, tempFilePath, "video/mp4");
+  const key = `${aspectRatio}/${videoId}.mp4`;
+  await uploadVideoToS3(cfg, key, processedFilePath, "video/mp4");
 
   const videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${key}`;
   video.videoURL = videoURL;
   updateVideo(cfg.db, video);
 
-  await Promise.all([rm(tempFilePath, { force: true })]);
+  await Promise.all([
+    rm(tempFilePath, { force: true }),
+    rm(processedFilePath, { force: true }),
+  ]);
 
   return respondWithJSON(200, video);
 }
@@ -83,16 +87,15 @@ async function getVideoAspectRatio(filepath: string) {
     }
   )
 
-  
-  const stdoutText = await new Response(process.stdout).text();
-  const stderrText = await new Response(process.stderr).text();
+  const outputText = await new Response(process.stdout).text();
+  const errorText = await new Response(process.stderr).text();
   const exitCode = await process.exited;
 
   if (exitCode !== 0) {
-    throw new Error(`ffprobe error: ${stderrText}`);
+    throw new Error(`ffprobe error: ${errorText}`);
   } 
 
-  const stdoutJSON = JSON.parse(stdoutText);
+  const stdoutJSON = JSON.parse(outputText);
   if (!stdoutJSON.streams || stdoutJSON.streams.length === 0) {
     throw new Error("No video streams found");
   }
@@ -105,4 +108,35 @@ async function getVideoAspectRatio(filepath: string) {
   } else if ((aspectRatio > 0.5) && (aspectRatio < 0.6)) {
     return "portrait";
   } else return "other";
+}
+
+async function processVideoForFastStart(inputFilePath: string) {
+  const processedFilePath = `${inputFilePath}.processed.mp4`;
+  
+  const process = Bun.spawn(
+    [
+      'ffmpeg', 
+      '-i',
+      inputFilePath,
+      '-movflags',
+      'faststart',
+      '-map_metadata',
+      '0',
+      '-codec',
+      'copy',
+      '-f',
+      'mp4',
+      processedFilePath,
+    ],
+    { stderr: 'pipe' }
+  )
+
+  const errorText = await new Response(process.stderr).text();
+  const exitCode = await process.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`FFmpeg error: ${errorText}`);
+  } 
+
+  return processedFilePath;
 }
