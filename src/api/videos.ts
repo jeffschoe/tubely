@@ -7,9 +7,7 @@ import { uploadVideoToS3 } from "../s3";
 import { BadRequestError, NotFoundError, UserForbiddenError } from "./errors";
 import { type ApiConfig } from "../config";
 import { type BunRequest } from "bun";
-
-
-
+import { exit } from "process";
 
 
 export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
@@ -49,9 +47,11 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   }
 
   const tempFilePath = path.join("/tmp", `${videoId}.mp4`);
-  await Bun.write(tempFilePath, file);
+  await Bun.write(tempFilePath, file); // saved to disk
 
-  let key = `${videoId}.mp4`;
+  const aspectRatio = await getVideoAspectRatio(tempFilePath);
+
+  let key = `${aspectRatio}/${videoId}.mp4`;
   await uploadVideoToS3(cfg, key, tempFilePath, "video/mp4");
 
   const videoURL = `https://${cfg.s3Bucket}.s3.${cfg.s3Region}.amazonaws.com/${key}`;
@@ -61,4 +61,48 @@ export async function handlerUploadVideo(cfg: ApiConfig, req: BunRequest) {
   await Promise.all([rm(tempFilePath, { force: true })]);
 
   return respondWithJSON(200, video);
+}
+
+async function getVideoAspectRatio(filepath: string) {
+  const process = Bun.spawn(
+    [
+      'ffprobe', 
+      '-v',
+      'error',
+      '-select_streams',
+      'v:0',
+      '-show_entries',
+      'stream=width,height',
+      '-of',
+      'json',
+      filepath,
+    ],
+    {
+      stdout: 'pipe', //make these available to read
+      stderr: 'pipe',
+    }
+  )
+
+  
+  const stdoutText = await new Response(process.stdout).text();
+  const stderrText = await new Response(process.stderr).text();
+  const exitCode = await process.exited;
+
+  if (exitCode !== 0) {
+    throw new Error(`ffprobe error: ${stderrText}`);
+  } 
+
+  const stdoutJSON = JSON.parse(stdoutText);
+  if (!stdoutJSON.streams || stdoutJSON.streams.length === 0) {
+    throw new Error("No video streams found");
+  }
+  
+  const { width, height } = stdoutJSON.streams[0];
+  const aspectRatio = width/height;
+
+  if ((aspectRatio > 1.7) && (aspectRatio < 1.8)) {
+    return "landscape";
+  } else if ((aspectRatio > 0.5) && (aspectRatio < 0.6)) {
+    return "portrait";
+  } else return "other";
 }
